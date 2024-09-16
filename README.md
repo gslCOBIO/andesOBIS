@@ -6,16 +6,11 @@ These exports scripts leverages the Django ORM, and thus have to be executed wit
 
 # Quickstart
 
-Clone the repo from within the Django root
+Clone the repo from within the Django root, and add `andesOBIS` to the `INSTALLED_APPS` 
 
-```bash
-git clone 
-```
-
-Edit the `andes_obis.py` as an entrypoint.
-
+Use the `export_obis` command to create the archive.
 
 ``` bash
-./manage.py shell < ./andesOBIS/andes_obis.py
+python manage.py export_obis
 ```
 
