@@ -42,9 +42,10 @@ python manage.py export_obis
 
 
 # notes
-changes to the obis database can be managed with the `--database=obisdb` flag, eg
+Limit the app to its own database. Changes to the obis database can be managed with the `--database=obisdb` flag, eg
 
 ``` bash
-./manage.py migrate --database=users
+./manage.py makemigrations
+./manage.py migrate andesOBIS --database=obisdb
 ```
 
