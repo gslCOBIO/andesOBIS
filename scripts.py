@@ -40,6 +40,13 @@ def add_photos():
     
     for fname in glob.glob("andesOBIS/*.jpg"):
         set_num = fname.split("_")[1]
+
+        # HACK for minagie
+        mission = fname.split("_")[1]
+        if mission=="16F":
+            exit()
+        set_num = fname.split("_")[2]
+
         set = Set.objects.get(set_number=set_num, cruise=cruise)
 
         with open(fname, 'rb') as fp:
