@@ -8,13 +8,13 @@ from shared_models.utils import get_active_cruise
 from django.core.files.images import ImageFile
 
 def get_biigle_photos():
-    email = "david.sean-fortin@dfo-mpo.gc.ca"
-    token = "P9JNvgVsX5lEIztm5PtNpu6QsLWvouC0"
+    email = "ENTER@EMAIL.COM"
+    token = "MY_BIIGLE_TOKEN"
     headers = {'Accept': 'application/json'}
     auth = HTTPBasicAuth(email, token)
     base_url ="https://biigle.de/api"
 
-    volume_id = 19384
+    volume_id = "VOLUME_ID"
     endpoint=f"/v1/volumes/{volume_id}/filenames"
     # get filenames
     response = requests.get(f"{base_url}{endpoint}", headers=headers, auth=auth)
