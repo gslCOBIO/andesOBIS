@@ -1,6 +1,7 @@
 from django.db import models
 from datetime import datetime
 import logging
+import pytz
 
 from shapely import LineString
 from ecosystem_survey.models import Catch
@@ -12,28 +13,53 @@ class NoCatchData(Exception):
     pass
 class InvalidSpecies(Exception):
     pass
+class NoParentCruiseError(Exception):
+    pass
 
 class OBISTable(models.Model):
+
+
     class Meta:
         abstract = True
         app_label = "andesOBIS"
 
     @classmethod
-    def obis_datetime_str(cls, dt: datetime, precision: int) -> str:
+    def obis_datetime_str(cls, dt: datetime, precision: int, tz=None) -> str:
+        if tz:
+            dt_in_user_timezone=dt.astimezone(pytz.timezone(tz))
+        else:
+            dt_in_user_timezone = dt
         if precision == 1:
-            return dt.strftime("%Y")
+            return dt_in_user_timezone.strftime("%Y")
         elif precision == 2:
-            return dt.strftime("%Y-%m")
+            return dt_in_user_timezone.strftime("%Y-%m")
         elif precision == 3:
-            return dt.strftime("%Y-%m-%d")
+            return dt_in_user_timezone.strftime("%Y-%m-%d")
         elif precision == 4:
-            return dt.strftime("%Y-%m-%dT%H%z")
+            return dt_in_user_timezone.strftime("%Y-%m-%dT%H%z")
         elif precision == 5:
-            return dt.strftime("%Y-%m-%dT%H:%M%z")
+            return dt_in_user_timezone.strftime("%Y-%m-%dT%H:%M%z")
         elif precision == 6:
-            return dt.strftime("%Y-%m-%dT%H:%M%S%z")
+            return dt_in_user_timezone.strftime("%Y-%m-%dT%H:%M:%S%z")
         elif precision == 7:
-            return dt.strftime("%Y-%m-%dT%H:%M%S.%f%z")
+            return dt_in_user_timezone.strftime("%Y-%m-%dT%H:%M:%S.%f%z")
+        else:
+            raise ValueError("Precision not implemented")
+
+    @classmethod
+    def obis_time_str(cls, dt: datetime, precision: int, tz=None) -> str:
+        if tz:
+            dt_in_user_timezone=dt.astimezone(pytz.timezone(tz))
+        else:
+            dt_in_user_timezone = dt
+        if precision == 4:
+            return dt_in_user_timezone.strftime("%H%z")
+        elif precision == 5:
+            return dt_in_user_timezone.strftime("%H:%M%z")
+        elif precision == 6:
+            return dt_in_user_timezone.strftime("%H:%M:%S%z")
+        elif precision == 7:
+            return dt_in_user_timezone.strftime("%H:%M:%S.%f%z")
         else:
             raise ValueError("Precision not implemented")
 
@@ -88,15 +114,15 @@ class Event(OBISTable):
         """
         if self._event_start_dt and self._event_end_dt:
             start_dt_str = OBISTable.obis_datetime_str(
-                self._event_start_dt, self._event_start_dt_p
+                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
             )
             end_dt_str = OBISTable.obis_datetime_str(
-                self._event_start_dt, self._event_end_dt_p
+                self._event_end_dt, self._event_end_dt_p, tz=self.timezone
             )
             return f"{start_dt_str}/{end_dt_str}"
         else:
             start_dt_str = OBISTable.obis_datetime_str(
-                self._event_start_dt, self._event_start_dt_p
+                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
             )
             return f"{start_dt_str}"
     eventDate.fget.short_description = "The date-time or interval during which a dwc:Event occurred. For occurrences, this is the date-time when the dwc:Event was recorded. Not suitable for a time in a geological context."
@@ -176,17 +202,39 @@ class Event(OBISTable):
 
 
     @property
-    def month(self) -> str|None:
-        """The integer month in which the dwc:Event occurred.
-        http://rs.tdwg.org/dwc/terms/month
+    def eventTime(self) -> str|None:
+        """The time or interval during which a dwc:Event occurred.
+        http://rs.tdwg.org/dwc/terms/eventTime
         """
-        if self._event_start_dt:
-            return self._event_start_dt.strftime("%m")
-        # elif self._event_end_dt:
-        #     return self._event_end_dt.strftime("%m")
+        if self._event_start_dt and self._event_end_dt:
+            start_dt_str = OBISTable.obis_time_str(
+                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+            )
+            end_dt_str = OBISTable.obis_time_str(
+                self._event_end_dt, self._event_end_dt_p, tz=self.timezone
+            )
+            return f"{start_dt_str}/{end_dt_str}"
+        elif self._event_start_dt:
+            start_dt_str = OBISTable.obis_time_str(
+                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+            )
+            return f"{start_dt_str}"
         else:
             return None
-    month.fget.short_description = "The integer month in which the dwc:Event occurred."
+    eventTime.fget.short_description = "The time or interval during which a dwc:Event occurred."
+
+    # @property
+    # def month(self) -> str|None:
+    #     """The integer month in which the dwc:Event occurred.
+    #     http://rs.tdwg.org/dwc/terms/month
+    #     """
+    #     if self._event_start_dt:
+    #         return self._event_start_dt.strftime("%m")
+    #     # elif self._event_end_dt:
+    #     #     return self._event_end_dt.strftime("%m")
+    #     else:
+    #         return None
+    # month.fget.short_description = "The integer month in which the dwc:Event occurred."
 
     @property
     def year(self) -> str:
@@ -452,6 +500,17 @@ class Event(OBISTable):
         verbose_name="Comments or notes about the dwc:Event.",
     )
 
+    @property
+    def timezone(self) -> str:
+        if isinstance(self.andes_object, Cruise):
+            return self.andes_object.display_tz
+        else:
+            try:
+                return self._parentEvent.timezone
+            except RecursionError:
+                logging.getLogger(__name__).error("All child Events needs to stem from a Cruise")
+                raise NoParentCruiseError
+
 
     def _init_from_cruise(self, cruise: Cruise):
         if not isinstance(cruise, Cruise):
@@ -493,8 +552,6 @@ class Event(OBISTable):
         self.datasetName = None
         self.countryCode = "CA"
         self.country = "Canada"
-        print("in init", self.decimalLatitude)
-
 
     def _init_from_fishing_set(self, my_set: Set):
         if not isinstance(my_set, Set):
@@ -545,6 +602,20 @@ class Event(OBISTable):
             "SiteVisit"  # https://registry.gbif-uat.org/vocabulary/EventType/concepts
         )
 
+    def _init_from_mixed_catch(self, catch: Catch):
+        """
+        Makes a subsampling event (mixed catch)
+        """
+        if not isinstance(catch, Catch):
+            raise RuntimeError("_init_from_mixed_catch needs a Catch")
+
+        if not catch.species.is_mixed_catch:
+            logging.getLogger(__name__).warning("%s needs to be a mixed catch", catch.id)
+            raise InvalidSpecies
+
+        self.andes_object = catch
+        raise NotImplementedError
+
 
 class Occurrence(OBISTable):
     andes_object = None
@@ -579,6 +650,7 @@ class Occurrence(OBISTable):
         max_length=255,
         verbose_name="An identifier for the nomenclatural (not taxonomic) details of a scientific name.",
     )
+
     @property
     def basisOfRecord(self) ->str:
         """	The specific nature of the data record.
@@ -730,10 +802,10 @@ class Occurrence(OBISTable):
         self.scientificNameID = f"urn:lsid:marinespecies.org:taxname:{catch.species.aphia_id}"
 
         # hard-coded
-        basisOfRecord = "HumanObservation"
-        occurrenceStatus = "Present"
-        associatedMedia=None,
-
+        # self.basisOfRecord = "HumanObservation"
+        # self.occurrenceStatus = "present"
+        self.associatedMedia = None,
+    
 
 
 class eMoF(OBISTable):

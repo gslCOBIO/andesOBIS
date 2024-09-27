@@ -28,6 +28,7 @@ def make_obis_events():
     top_parent._init_from_cruise(cruise)
     top_parent.save()
 
+
     for set in Set.objects.filter(cruise=cruise):
         print(set)
         if len(set.operations.filter(is_fishing=True)) == 0:
@@ -36,13 +37,17 @@ def make_obis_events():
         set_event._init_from_fishing_set(set)
         set_event.save()
 
-        for catch_idx, catch in enumerate(Catch.objects.filter(set=set)):
-            # print(f"\t {catch}")
+        for catch in Catch.objects.filter(set=set):
 
             if catch.species.is_mixed_catch:
                 pass
-                # mixed_catch_event = make_event_from_mixed_catch(set, event)
-                # make_occurence_from_catch
+                # try:
+                #     occurrence = Occurrence(_event=set_event)
+                #     occurrence._init_from_mixed_catch(catch)
+                #     occurrence.save()
+                # except InvalidSpecies as exc:
+                #     print(exc)
+                #     pass
             else:
                 try:
                     occurrence = Occurrence(_event=set_event)
@@ -55,11 +60,6 @@ def make_obis_events():
 
 
 
-def make_event_from_mixed_catch(catch: Catch, parent: Event) -> Event:
-    """
-    Makes a subsampling event (mixed catch)
-    This makes a follow-up call to make_occurence_from_mixed_catch() for all child baskets it contains
-    """
 
 
 
