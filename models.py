@@ -1,6 +1,7 @@
 from django.db import models
 from datetime import datetime
-
+from shared_models.models import Cruise
+from shared_models.utils import calc_nautical_dist
 
 class OBISTable(models.Model):
     class Meta:
@@ -39,15 +40,22 @@ class Event(OBISTable):
         (7, "millisecond"),
     ]
 
-    ####
-    ### obligatoire (excluding private members)
-    ####
+    def __init__(self, andes_object, *args, **kwargs):
+        self.andes_object = andes_object
+        if isinstance(self.andes_object, Cruise):
+            self._init_from_cruise(self.andes_object)
+        super().__init__(*args, **kwargs)
 
+        return
+
+    
     eventID = models.CharField(
         primary_key=True,
         max_length=255,
         verbose_name="An identifier for the set of information associated with a dwc:Event (something that occurs at a place and time). May be a global unique identifier or an identifier specific to the data set.",
+        help_text="http://rs.tdwg.org/dwc/terms/eventID",
     )
+    # Private actual parent event object 
     _parentEvent = models.ForeignKey(
         "Event",
         blank=True,
@@ -55,10 +63,11 @@ class Event(OBISTable):
         default=None,
         on_delete=models.SET_DEFAULT,
         verbose_name="An identifier for the broader dwc:Event that groups this and potentially other dwc:Events",
+        help_text="http://rs.tdwg.org/dwc/terms/eventID",
     )
 
     @property
-    def parentEventID(self) -> str:
+    def parentEventID(self) -> str|None:
         """parent EventID
         An identifier for the broader dwc:Event that groups this and potentially other dwc:Events
         """
@@ -66,13 +75,15 @@ class Event(OBISTable):
             return self._parentEvent.eventID
         else:
             return None
-
     parentEventID.fget.short_description = "An identifier for the broader dwc:Event that groups this and potentially other dwc:Events"
 
     @property
     def eventDate(self) -> str:
         """Event Date
         http://rs.tdwg.org/dwc/terms/eventDate
+
+        The date-time or interval during which a dwc:Event occurred. For occurrences, this is the date-time when the dwc:Event was recorded. Not suitable for a time in a geological context.
+
         """
         if self._event_start_dt and self._event_end_dt:
             start_dt_str = OBISTable.obis_datetime_str(
@@ -87,7 +98,6 @@ class Event(OBISTable):
                 self._event_start_dt, self._event_start_dt_p
             )
             return f"{start_dt_str}"
-
     eventDate.fget.short_description = "The date-time or interval during which a dwc:Event occurred. For occurrences, this is the date-time when the dwc:Event was recorded. Not suitable for a time in a geological context."
 
     _event_start_dt = models.DateTimeField(
@@ -119,6 +129,7 @@ class Event(OBISTable):
         decimal_places=6,
         max_digits=8,
         verbose_name="The geographic latitude (in decimal degrees, using the spatial reference system given in dwc:geodeticDatum) of the geographic center of a dcterms:Location. Positive values are north of the Equator, negative values are south of it. Legal values lie between -90 and 90, inclusive.",
+        help_text="http://rs.tdwg.org/dwc/terms/decimalLatitude"
     )
     decimalLongitude = models.DecimalField(
         blank=True,
@@ -127,48 +138,7 @@ class Event(OBISTable):
         decimal_places=6,
         max_digits=9,
         verbose_name="The geographic longitude (in decimal degrees, using the spatial reference system given in dwc:geodeticDatum) of the geographic center of a dcterms:Location. Positive values are east of the Greenwich Meridian, negative values are west of it. Legal values lie between -180 and 180, inclusive.",
-    )
-
-    @properties
-    def geodeticDatum(self) -> str:
-        """The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based.
-
-        Recommended best practice is to use the EPSG code of the SRS, if known. Otherwise use a controlled vocabulary for the name or code of the geodetic datum, if known. Otherwise use a controlled vocabulary for the name or code of the ellipsoid, if known. If none of these is known, use the value unknown. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
-        http://rs.tdwg.org/dwc/terms/geodeticDatum
-        """
-        return "epsg:4326"
-
-    geodeticDatum.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based."
-
-    ####
-    # Fortement Recommendé (excluding private members)
-    ####
-
-    @property
-    def month(self) -> str:
-        """The integer month in which the dwc:Event occurred.
-        http://rs.tdwg.org/dwc/terms/month
-        """
-        return self._event_start_dt.strftime("%m")
-
-    month.fget.short_description = "The integer month in which the dwc:Event occurred."
-
-    @property
-    def year(self) -> str:
-        """The four-digit year in which the dwc:Event occurred, according to the Common Era Calendar.
-        http://rs.tdwg.org/dwc/terms/year
-        """
-        return self._event_start_dt.strftime("%Y")
-
-    year.fget.short_description = "The four-digit year in which the dwc:Event occurred, according to the Common Era Calendar."
-
-    continent = models.CharField(
-        blank=True,
-        null=True,
-        default=None,
-        max_length=127,
-        verbose_name="The name of the continent in which the dcterms:Location occurs.",
-        help_text="http://rs.tdwg.org/dwc/terms/continent",
+        help_text="http://rs.tdwg.org/dwc/terms/decimalLongitude"
     )
 
     coordinatePrecision = models.DecimalField(
@@ -190,6 +160,63 @@ class Event(OBISTable):
         verbose_name="The horizontal distance (in meters) from the given dwc:decimalLatitude and dwc:decimalLongitude describing the smallest circle containing the whole of the dcterms:Location. Leave the value empty if the uncertainty is unknown, cannot be estimated, or is not applicable (because there are no coordinates). Zero is not a valid value for this term.",
         help_text="http://rs.tdwg.org/dwc/terms/coordinateUncertaintyInMeters",
     )
+    @property
+    def geodeticDatum(self) -> str|None:
+        """The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based.
+
+        Recommended best practice is to use the EPSG code of the SRS, if known. Otherwise use a controlled vocabulary for the name or code of the geodetic datum, if known. Otherwise use a controlled vocabulary for the name or code of the ellipsoid, if known. If none of these is known, use the value unknown. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
+        http://rs.tdwg.org/dwc/terms/geodeticDatum
+        """
+        if self.decimalLongitude or self.decimalLatitude:
+            return "epsg:4326"
+        else:
+            return None
+    geodeticDatum.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based."
+
+
+    @property
+    def month(self) -> str|None:
+        """The integer month in which the dwc:Event occurred.
+        http://rs.tdwg.org/dwc/terms/month
+        """
+        if self._event_start_dt:
+            return self._event_start_dt.strftime("%m")
+        # elif self._event_end_dt:
+        #     return self._event_end_dt.strftime("%m")
+        else:
+            return None
+    month.fget.short_description = "The integer month in which the dwc:Event occurred."
+
+    @property
+    def year(self) -> str:
+        """The four-digit year in which the dwc:Event occurred, according to the Common Era Calendar.
+        http://rs.tdwg.org/dwc/terms/year
+        """
+        if self._event_start_dt:
+            return self._event_start_dt.strftime("%Y")
+        # elif self._event_end_dt:
+        #     return self._event_end_dt.strftime("%Y")
+        else:
+            return None
+    year.fget.short_description = "The four-digit year in which the dwc:Event occurred, according to the Common Era Calendar."
+
+    continent = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="The name of the continent in which the dcterms:Location occurs.",
+        help_text="http://rs.tdwg.org/dwc/terms/continent",
+    )
+
+    # @property
+    # def continent(self) -> str:
+    #     """The name of the continent in which the dcterms:Location occurs.
+    #     http://rs.tdwg.org/dwc/terms/continent
+    #     Recommended best practice is to use a controlled vocabulary such as the Getty Thesaurus of Geographic Names. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
+    #     """
+    #     return "North America"
+    # continent.fget.short_description = "The name of the continent in which the dcterms:Location occurs."
 
     eventType = models.CharField(
         blank=True,
@@ -209,6 +236,7 @@ class Event(OBISTable):
         verbose_name="The greater depth of a range of depth below the local surface, in meters.",
         help_text="http://rs.tdwg.org/dwc/terms/maximumDepthInMeters",
     )
+
     minimumDepthInMeters = models.DecimalField(
         blank=True,
         null=True,
@@ -219,88 +247,133 @@ class Event(OBISTable):
         help_text="http://rs.tdwg.org/dwc/terms/minimumDepthInMeterss",
     )
 
-    @property
-    def language(self) -> str:
-        """A language of the resource.
-        http://purl.org/dc/terms/language
+    language = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=63,
+        verbose_name="A language of the resource. Recommended best practice is to use an IRI from the Library of Congress ISO 639-2 scheme http://id.loc.gov/vocabulary/iso639-2",
+        help_text="http://purl.org/dc/terms/language",
+    )
+    # @property
+    # def language(self) -> str:
+    #     """A language of the resource.
+    #     http://purl.org/dc/terms/language
+    #     """
+    #     return "En"
+    # language.fget.short_description = "A language of the resource. Recommended best practice is to use an IRI from the Library of Congress ISO 639-2 scheme http://id.loc.gov/vocabulary/iso639-2"
 
-        """
-        return "En"
-
-    language.fget.short_description = "A language of the resource. Recommended best practice is to use an IRI from the Library of Congress ISO 639-2 scheme http://id.loc.gov/vocabulary/iso639-2"
-
-    @property
-    def license(self) -> str:
-        """A legal document giving official permission to do something with the resource.
-
-        http://purl.org/dc/terms/license
-        """
-        return "http://creativecommons.org/licenses/by/4.0/legalcode"
-
-    language.fget.short_description = (
-        "A legal document giving official permission to do something with the resource."
+    license = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=255,
+        verbose_name="A legal document giving official permission to do something with the resource.",
+        help_text="http://purl.org/dc/terms/license",
     )
 
-    @property
-    def rightsHolder(self) -> str:
-        """A person or organization owning or managing rights over the resource.
+    # @property
+    # def license(self) -> str:
+    #     """A legal document giving official permission to do something with the resource.
+    #     http://purl.org/dc/terms/license
+    #     """
+    #     return "http://creativecommons.org/licenses/by/4.0/legalcode"
+    # language.fget.short_description = (
+    #     "A legal document giving official permission to do something with the resource."
+    # )
 
-        http://purl.org/dc/terms/rightsHolder
-        """
-        return "His Majesty the King in right of Canada, as represented by the Minister of Fisheries and Oceans"
-
-    language.fget.short_description = (
-        "A person or organization owning or managing rights over the resource."
+    license = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="A person or organization owning or managing rights over the resource.",
+        help_text="http://purl.org/dc/terms/rightsHolder",
     )
 
-    @property
-    def datasetID(self) -> str | None:
-        """An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution.
+    # @property
+    # def rightsHolder(self) -> str:
+    #     """A person or organization owning or managing rights over the resource.
+    #     http://purl.org/dc/terms/rightsHolder
+    #     """
+    #     return "His Majesty the King in right of Canada, as represented by the Minister of Fisheries and Oceans"
+    # language.fget.short_description = (
+    #     "A person or organization owning or managing rights over the resource."
+    # )
 
-        http://rs.tdwg.org/dwc/terms/datasetID
-        """
-        return None
-
-    datasetID.fget.short_description = "An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution."
-
-    @property
-    def institutionID(self) -> str | None:
-        """An identifier for the institution having custody of the object(s) or information referred to in the record.
-
-        http://rs.tdwg.org/dwc/terms/institutionID
-
-        For physical specimens, the recommended best practice is to use a globally unique and resolvable identifier from a collections registry such as the Research Organization Registry (ROR) or the GBIF Registry of Scientific Collections (https://www.gbif.org/grscicoll).
-
-        """
-        # FOR IML use https://edmo.seadatanet.org/report/4160
-        return None
-
-    institutionID.fget.short_description = "An identifier for the institution having custody of the object(s) or information referred to in the record."
-
-    @property
-    def institutionCode(self) -> str | None:
-        """The name (or acronym) in use by the institution having custody of the object(s) or information referred to in the record.
-
-        http://rs.tdwg.org/dwc/terms/institutionCode
-        """
-        # for IML, use "IML"
-        return None
-
-    institutionCode.fget.short_description = "The name (or acronym) in use by the institution having custody of the object(s) or information referred to in the record."
-
-    @property
-    def datasetName(self) -> str | None:
-        """The name identifying the data set from which the record was derived.
-
-        http://rs.tdwg.org/dwc/terms/datasetName
-        """
-        return None
-
-    datasetName.fget.short_description = (
-        "The name identifying the data set from which the record was derived."
+    datasetID = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution.",
+        help_text="http://rs.tdwg.org/dwc/terms/datasetID",
     )
 
-    # IML uses station name when the event is a Set
+    # @property
+    # def datasetID(self) -> str | None:
+    #     """An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution.
+    #     http://rs.tdwg.org/dwc/terms/datasetID
+    #     """
+    #     return None
+    # datasetID.fget.short_description = "An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution."
+
+    institutionID = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="An identifier for the institution having custody of the object(s) or information referred to in the record.",
+        help_text="http://rs.tdwg.org/dwc/terms/institutionID",
+    )
+
+    # @property
+    # def institutionID(self) -> str | None:
+    #     """An identifier for the institution having custody of the object(s) or information referred to in the record.
+    #     http://rs.tdwg.org/dwc/terms/institutionID
+    #     For physical specimens, the recommended best practice is to use a globally unique and resolvable identifier from a collections registry such as the Research Organization Registry (ROR) or the GBIF Registry of Scientific Collections (https://www.gbif.org/grscicoll).
+    #     """
+    #     # FOR IML use https://edmo.seadatanet.org/report/4160
+    #     return None
+    # institutionID.fget.short_description = "An identifier for the institution having custody of the object(s) or information referred to in the record."
+
+    institutionCode = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="The name (or acronym) in use by the institution having custody of the object(s) or information referred to in the record.",
+        help_text="http://rs.tdwg.org/dwc/terms/institutionCode",
+    )
+    # @property
+    # def institutionCode(self) -> str | None:
+    #     """The name (or acronym) in use by the institution having custody of the object(s) or information referred to in the record.
+    #     http://rs.tdwg.org/dwc/terms/institutionCode
+    #     """
+    #     # for IML, use "IML"
+    #     return None
+    # institutionCode.fget.short_description = "The name (or acronym) in use by the institution having custody of the object(s) or information referred to in the record."
+
+    datasetName = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="The name identifying the data set from which the record was derived.",
+        help_text="http://rs.tdwg.org/dwc/terms/datasetName",
+    )
+
+    # @property
+    # def datasetName(self) -> str | None:
+    #     """The name identifying the data set from which the record was derived.
+    #     http://rs.tdwg.org/dwc/terms/datasetName
+    #     """
+    #     return None
+    # datasetName.fget.short_description = (
+    #     "The name identifying the data set from which the record was derived."
+    # )
+
+    # IML uses station name when the event is a Set and mission number when mission
     fieldNumber = models.CharField(
         blank=True,
         null=True,
@@ -310,12 +383,6 @@ class Event(OBISTable):
         help_text="http://rs.tdwg.org/dwc/terms/fieldNumber",
     )
 
-    # TODO
-    # locationID
-
-    ####
-    # Recommendé (excluding private members)
-    ####
     footprintWKT = models.CharField(
         blank=True,
         null=True,
@@ -326,43 +393,56 @@ class Event(OBISTable):
     )
 
     @property
-    def footprintSRS(self) -> str:
+    def footprintSRS(self) -> str|None:
         """The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geometry given in dwc:footprintWKT is based.
 
         Recommended best practice is to use the EPSG code of the SRS, if known. Otherwise use a controlled vocabulary for the name or code of the geodetic datum, if known. Otherwise use a controlled vocabulary for the name or code of the ellipsoid, if known. If none of these is known, use the value unknown. It is also permitted to provide the SRS in Well-Known-Text, especially if no EPSG code provides the necessary values for the attributes of the SRS. Do not use this term to describe the SRS of the dwc:decimalLatitude and dwc:decimalLongitude, nor of any verbatim coordinates - use the dwc:geodeticDatum and dwc:verbatimSRS instead. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
         http://rs.tdwg.org/dwc/terms/footprintSRS
         """
-        return "epsg:4326"
-
+        if self.footprintWKT:
+            return "epsg:4326"
+        else:
+            return None
     footprintSRS.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geometry given in dwc:footprintWKT is based."
 
-    @property
-    def countryCode(self) -> str:
-        """The standard code for the country in which the dcterms:Location occurs.
-
-        http://rs.tdwg.org/dwc/terms/countryCode
-
-        Recommended best practice is to use an ISO 3166-1-alpha-2 country code. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
-        """
-        return "CA"
-
-    countryCode.fget.short_description = (
-        "The standard code for the country in which the dcterms:Location occurs."
+    countryCode = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=7,
+        verbose_name="The standard code for the country in which the dcterms:Location occurs. Recommended best practice is to use an ISO 3166-1-alpha-2 country code. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.",
+        help_text="http://rs.tdwg.org/dwc/terms/countryCode",
     )
 
-    @property
-    def country(self) -> str:
-        """The name of the country or major administrative unit in which the dcterms:Location occurs.
+    # @property
+    # def countryCode(self) -> str:
+    #     """The standard code for the country in which the dcterms:Location occurs.
+    #     http://rs.tdwg.org/dwc/terms/countryCode
+    #     Recommended best practice is to use an ISO 3166-1-alpha-2 country code. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
+    #     """
+    #     return "CA"
+    # countryCode.fget.short_description = (
+    #     "The standard code for the country in which the dcterms:Location occurs."
+    # )
 
-        http://rs.tdwg.org/dwc/terms/country
+    country = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=63,
+        verbose_name="The name of the country or major administrative unit in which the dcterms:Location occurs. Recommended best practice is to use a controlled vocabulary such as the Getty Thesaurus of Geographic Names. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.",
+        help_text="http://rs.tdwg.org/dwc/terms/country",
+    )
 
-        Recommended best practice is to use a controlled vocabulary such as the Getty Thesaurus of Geographic Names. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
-
-        """
-        return "Canada"
-
-    country.fget.short_description = "The name of the country or major administrative unit in which the dcterms:Location occurs."
-
+    # @property
+    # def country(self) -> str:
+    #     """The name of the country or major administrative unit in which the dcterms:Location occurs.
+    #     http://rs.tdwg.org/dwc/terms/country
+    #     Recommended best practice is to use a controlled vocabulary such as the Getty Thesaurus of Geographic Names. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
+    #     """
+    #     return "Canada"
+    # country.fget.short_description = "The name of the country or major administrative unit in which the dcterms:Location occurs."
+    
     eventRemarks = models.CharField(
         max_length=255,
         blank=True,
@@ -371,6 +451,46 @@ class Event(OBISTable):
         verbose_name="Comments or notes about the dwc:Event.",
     )
 
+
+    def _init_from_cruise(self, cruise: Cruise):
+        if cruise is None:
+            raise RuntimeError("Cannot get active cruise")
+        self.eventID = cruise.mission_number
+
+        self._event_start_dt = cruise.start_date
+        self._event_start_dt_p=3,
+        self._event_end_dt = cruise.end_date
+        self._event_end_dt_p=3,
+
+        # use cruise bounding box
+        self.decimalLatitude = 0.5 * (cruise.max_lat + cruise.min_lat)
+        self.decimalLongitude = 0.5 * (cruise.max_lng + cruise.min_lng)
+        # use half of great-circle distance (converted to metres)
+        _coordinateUncertaintyInMeters = (
+            1852
+            * 0.5
+            * calc_nautical_dist(
+                {"lat": cruise.max_lat, "lng": cruise.max_lng},
+                {"lat": cruise.min_lat, "lng": cruise.min_lng},
+            )
+        )
+        self.coordinateUncertaintyInMeters = round(_coordinateUncertaintyInMeters, 3)
+        self.fieldNumber = cruise.mission_number
+        self.eventRemarks = cruise.notes
+
+        # Hard-coded values
+        self.eventType = "Project"  # https://registry.gbif-uat.org/vocabulary/EventType/concepts
+        self.continent = "North America"
+        self.language = "En"
+        self.coordinatePrecision = None
+        self.license = "http://creativecommons.org/licenses/by/4.0/legalcode"
+        self.rightsHolder = "His Majesty the King in right of Canada, as represented by the Minister of Fisheries and Oceans"
+        self.institutionID = "https://edmo.seadatanet.org/report/4160"
+        self.institutionCode = "IML"
+        self.datasetName = None
+        self.countryCode = "CA"
+        self.country = "Canada"
+        # self.save()
 
 class Occurrence(OBISTable):
     occurenceID = models.CharField(
