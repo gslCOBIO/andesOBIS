@@ -1,7 +1,17 @@
 from django.db import models
 from datetime import datetime
-from shared_models.models import Cruise
+import logging
+
+from shapely import LineString
+from ecosystem_survey.models import Catch
+from shared_models.models import Cruise, Set
 from shared_models.utils import calc_nautical_dist
+
+# Exceptions
+class NoCatchData(Exception):
+    pass
+class InvalidSpecies(Exception):
+    pass
 
 class OBISTable(models.Model):
     class Meta:
@@ -29,7 +39,7 @@ class OBISTable(models.Model):
 
 
 class Event(OBISTable):
-
+    andes_object = None
     datetime_precision_choices = [
         (1, "year"),
         (2, "month"),
@@ -39,15 +49,6 @@ class Event(OBISTable):
         (6, "second"),
         (7, "millisecond"),
     ]
-
-    def __init__(self, andes_object, *args, **kwargs):
-        self.andes_object = andes_object
-        if isinstance(self.andes_object, Cruise):
-            self._init_from_cruise(self.andes_object)
-        super().__init__(*args, **kwargs)
-
-        return
-
     
     eventID = models.CharField(
         primary_key=True,
@@ -453,14 +454,16 @@ class Event(OBISTable):
 
 
     def _init_from_cruise(self, cruise: Cruise):
-        if cruise is None:
-            raise RuntimeError("Cannot get active cruise")
-        self.eventID = cruise.mission_number
+        if not isinstance(cruise, Cruise):
+            raise RuntimeError("_init_from_cruise needs a valid cruise")
+        logging.getLogger(__name__).debug("Making Event from Cruise object")
+        self.andes_object = cruise
 
+        self.eventID = cruise.mission_number
         self._event_start_dt = cruise.start_date
-        self._event_start_dt_p=3,
+        self._event_start_dt_p=3
         self._event_end_dt = cruise.end_date
-        self._event_end_dt_p=3,
+        self._event_end_dt_p=3
 
         # use cruise bounding box
         self.decimalLatitude = 0.5 * (cruise.max_lat + cruise.min_lat)
@@ -490,9 +493,62 @@ class Event(OBISTable):
         self.datasetName = None
         self.countryCode = "CA"
         self.country = "Canada"
-        # self.save()
+        print("in init", self.decimalLatitude)
+
+
+    def _init_from_fishing_set(self, my_set: Set):
+        if not isinstance(my_set, Set):
+            raise RuntimeError("_init_from_fishing_set needs a valid Set")
+        logging.getLogger(__name__).debug("Making Event from Set object")
+
+        if len(my_set.operations.filter(is_fishing=True)) == 0:
+            logging.getLogger(__name__).warning("%s has no fishing operations", my_set)
+            raise ValueError
+
+        self.andes_object = my_set
+
+        def make_set_wkt(my_set: Set):
+            start_coord = (
+                my_set.start_longitude,
+                my_set.start_latitude,
+                my_set.start_depth_m,
+            )
+            end_coord = (my_set.end_longitude, my_set.end_latitude, my_set.end_depth_m)
+            ls = LineString((start_coord, end_coord))
+            return ls.wkt
+
+        self._event_start_dt = my_set.start_date
+        self._event_end_dt = my_set.end_date
+
+        # use set bounding box
+        self.decimalLatitude = 0.5 * (my_set.start_latitude + my_set.end_latitude)
+        self.decimalLongitude = 0.5 * (my_set.start_longitude + my_set.end_longitude)
+        # use half of great-circle distance (converted to metres)
+        _coordinateUncertaintyInMeters = (
+            1852
+            * 0.5
+            * calc_nautical_dist(
+                {"lat": my_set.start_latitude, "lng": my_set.start_longitude},
+                {"lat": my_set.end_latitude, "lng": my_set.end_longitude},
+            )
+        )
+        self.coordinateUncertaintyInMeters = round(_coordinateUncertaintyInMeters, 3)
+        self.eventRemarks = my_set.remarks
+        self.eventID = f"{self._parentEvent.eventID}-Set{my_set.set_number}"
+        self.maximumDepthInMeters = my_set.max_depth_m if my_set.max_depth_m else None
+        self.minimumDepthInMeters = my_set.min_depth_m if my_set.min_depth_m else None
+        self.footprintWKT = make_set_wkt(my_set)
+        self.fieldNumber = my_set.station.name
+
+        # hard-coded values
+        self.eventType = (
+            "SiteVisit"  # https://registry.gbif-uat.org/vocabulary/EventType/concepts
+        )
+
 
 class Occurrence(OBISTable):
+    andes_object = None
+
     occurenceID = models.CharField(
         primary_key=True,
         max_length=255,
@@ -605,6 +661,78 @@ class Occurrence(OBISTable):
 # genus
 # specificEpithet
 # taxonRank
+
+    def _init_from_catch(self, catch: Catch):
+        """
+        Create an OBIS occurrence from a top level sampling event (a Set).
+        Baskets having a parent baskets (poiting to a mixed catch) are ignored, they need to be populated using make_event_from_mixed_catch.
+        Baskets that represent a subsample are ignored, they need a sub-sampling event.
+
+        Args:
+            catch (Catch): The Andes catch that supports the occurence
+            catch_idx (int): an integrer representing the catch index in this event
+
+        Raises:
+            InvalidSpecies: If the catch species is mixed or does not have an aphiaID
+            NoCatchData: If the catch is hollow (no actual data was inputed)
+
+        """
+        if not isinstance(catch, Catch):
+            raise RuntimeError("_init_from_catch needs a Catch")
+
+        if catch.species.is_mixed_catch:
+            logging.getLogger(__name__).warning("%s is a mixed catch, skipped", catch.id)
+            raise InvalidSpecies
+
+        if catch.species.aphia_id is None:
+            logging.getLogger(__name__).warning(
+                "%s does not have an AphiaID, skipped", catch.id
+            )
+            raise InvalidSpecies
+
+        if catch.has_parent_baskets:
+            logging.getLogger(__name__).warning(
+                "catch has parent baskets, perhaps a mixed catch?"
+            )
+
+        # meaningless catch:
+        # has no baskets
+        # AND has no weight
+        # AND has no unmeasured specimen count
+        # AND has no specimens
+        # AND has no relative abundance category
+        # AND has no catch images
+        # has no children baskets (this case is treated separately)
+
+        if (
+            (not catch.has_child_baskets)
+            and (catch.extrapolated_specimen_count is None)
+            and (catch.relative_abundance_category is None)
+            and (catch.total_basket_weight == 0)
+            and (catch.unmeasured_specimen_count == 0)
+            and (len(catch.specimens) == 0)
+            and (len(catch.catch_images) == 0)
+            and catch.baskets.filter(children__isnull=False)
+        ):
+
+            logging.getLogger(__name__).warning(
+                "%s does not contain meaningfull data to export, delete it and try again.",
+                catch,
+            )
+            raise NoCatchData("catch does not contain meaningfull data to export")
+
+        logging.getLogger(__name__).debug("Making Occurrence from Catch object")
+
+        self.andes_object = catch
+        self.occurenceID = f"{self._event.eventID}_{self.andes_object.id}"
+        self.verbatimIdentification = catch.species.scientific_name
+        self.scientificName = catch.species.scientific_name
+        self.scientificNameID = f"urn:lsid:marinespecies.org:taxname:{catch.species.aphia_id}"
+
+        # hard-coded
+        basisOfRecord = "HumanObservation"
+        occurrenceStatus = "Present"
+        associatedMedia=None,
 
 
 
