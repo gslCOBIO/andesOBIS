@@ -1,6 +1,5 @@
 from django.db import models
 from datetime import datetime
-from enum import Enum
 
 
 class OBISTable(models.Model):
@@ -129,6 +128,17 @@ class Event(OBISTable):
         max_digits=9,
         verbose_name="The geographic longitude (in decimal degrees, using the spatial reference system given in dwc:geodeticDatum) of the geographic center of a dcterms:Location. Positive values are east of the Greenwich Meridian, negative values are west of it. Legal values lie between -180 and 180, inclusive.",
     )
+
+    @properties
+    def geodeticDatum(self) -> str:
+        """The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based.
+
+        Recommended best practice is to use the EPSG code of the SRS, if known. Otherwise use a controlled vocabulary for the name or code of the geodetic datum, if known. Otherwise use a controlled vocabulary for the name or code of the ellipsoid, if known. If none of these is known, use the value unknown. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
+        http://rs.tdwg.org/dwc/terms/geodeticDatum
+        """
+        return "epsg:4326"
+
+    geodeticDatum.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based."
 
     ####
     # Fortement Recommendé (excluding private members)
@@ -315,35 +325,43 @@ class Event(OBISTable):
         help_text="http://rs.tdwg.org/dwc/terms/footprintWKT",
     )
 
-    # TODO
-    # day
-    # endDayOfYear
-    # eventTime
-    # habitat
-    # startDayOfYear
-    # verbatimEventDate
-    # country
-    # footprintWKT
-    # geodeticDatum
-    # locality
-    # locationAccordingTo
-    # locationRemarks
-    # waterBody
-    # accessRights
-    # bibliographicCitation
-    # datasetID
-    # datasetName
-    # dynamicProperties
-    # language
-    # license
-    # modified
-    # references
-    # rightsHolder
+    @property
+    def footprintSRS(self) -> str:
+        """The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geometry given in dwc:footprintWKT is based.
 
-    ####
-    # Facultatif (excluding private members)
-    ####
-    # TODO
+        Recommended best practice is to use the EPSG code of the SRS, if known. Otherwise use a controlled vocabulary for the name or code of the geodetic datum, if known. Otherwise use a controlled vocabulary for the name or code of the ellipsoid, if known. If none of these is known, use the value unknown. It is also permitted to provide the SRS in Well-Known-Text, especially if no EPSG code provides the necessary values for the attributes of the SRS. Do not use this term to describe the SRS of the dwc:decimalLatitude and dwc:decimalLongitude, nor of any verbatim coordinates - use the dwc:geodeticDatum and dwc:verbatimSRS instead. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
+        http://rs.tdwg.org/dwc/terms/footprintSRS
+        """
+        return "epsg:4326"
+
+    footprintSRS.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geometry given in dwc:footprintWKT is based."
+
+    @property
+    def countryCode(self) -> str:
+        """The standard code for the country in which the dcterms:Location occurs.
+
+        http://rs.tdwg.org/dwc/terms/countryCode
+
+        Recommended best practice is to use an ISO 3166-1-alpha-2 country code. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
+        """
+        return "CA"
+
+    countryCode.fget.short_description = (
+        "The standard code for the country in which the dcterms:Location occurs."
+    )
+
+    @property
+    def country(self) -> str:
+        """The name of the country or major administrative unit in which the dcterms:Location occurs.
+
+        http://rs.tdwg.org/dwc/terms/country
+
+        Recommended best practice is to use a controlled vocabulary such as the Getty Thesaurus of Geographic Names. Recommended best practice is to leave this field blank if the dcterms:Location spans multiple entities at this administrative level or if the dcterms:Location might be in one or another of multiple possible entities at this level. Multiplicity and uncertainty of the geographic entity can be captured either in the term dwc:higherGeography or in the term dwc:locality, or both.
+
+        """
+        return "Canada"
+
+    country.fget.short_description = "The name of the country or major administrative unit in which the dcterms:Location occurs."
 
     eventRemarks = models.CharField(
         max_length=255,
@@ -352,7 +370,6 @@ class Event(OBISTable):
         default=None,
         verbose_name="Comments or notes about the dwc:Event.",
     )
-    # footprintSRS
 
 
 class Occurrence(OBISTable):
@@ -386,13 +403,47 @@ class Occurrence(OBISTable):
         max_length=255,
         verbose_name="An identifier for the nomenclatural (not taxonomic) details of a scientific name.",
     )
-    basisOfRecord = models.CharField(
-        max_length=255, verbose_name="The specific nature of the data record."
-    )
-    occurrenceStatus = models.CharField(
+    @property
+    def basisOfRecord(self) ->str:
+        """	The specific nature of the data record.
+
+        http://rs.tdwg.org/dwc/terms/basisOfRecord
+
+    	Recommended best practice is to use a controlled vocabulary such as the set of local names of the identifiers for classes in Darwin Core.
+   
+        """
+        return "HumanObservation"
+    basisOfRecord.fget.short_description = "The specific nature of the data record."
+    # basisOfRecord = models.CharField(
+    #     max_length=63, verbose_name="The specific nature of the data record."
+    # )
+
+    @property
+    def occurrenceStatus(self) ->str:
+        """A statement about the presence or absence of a dwc:Taxon at a dcterms:Location.
+
+        http://rs.tdwg.org/dwc/terms/occurrenceStatus
+
+        For dwc:Occurrences, the default vocabulary is recommended to consist of present and absent, but can be extended by implementers with good justification. This term has an equivalent in the dwciri: namespace that allows only an IRI as a value, whereas this term allows for any string literal value.
+
+        """
+        return "present"
+    occurrenceStatus.fget.short_description = "A statement about the presence or absence of a dwc:Taxon at a dcterms:Location."
+    # occurrenceStatus = models.CharField(
+    #     max_length=63,
+    #     verbose_name="A statement about the presence or absence of a dwc:Taxon at a dcterms:Location",
+    # )
+
+    occurrenceRemarks = models.CharField(
         max_length=255,
-        verbose_name="A statement about the presence or absence of a dwc:Taxon at a dcterms:Location",
+        blank=True,
+        null=True,
+        default=None,
+        verbose_name="Comments or notes about the dwc:Occurrence.",
+        help_text="http://rs.tdwg.org/dwc/terms/occurrenceRemarks"
     )
+
+
     associatedMedia = models.CharField(
         blank=True,
         null=True,
@@ -400,10 +451,41 @@ class Occurrence(OBISTable):
         max_length=255,
         verbose_name="A list (concatenated and separated) of identifiers (publication, global unique identifier, URI) of media associated with the dwc:Occurrence.",
     )
-    taxonRemarks = models.CharField(
-        max_length=255,
-        verbose_name="A statement about the presence or absence of a dwc:Taxon at a dcterms:Location",
-    )
+
+    @property
+    def taxonRemarks(self) -> str|None:
+        """Comments or notes about the taxon or name.
+
+        http://rs.tdwg.org/dwc/terms/taxonRemarks
+
+        """
+        return None
+    taxonRemarks.fget.short_description = "Comments or notes about the taxon or name."
+    # taxonRemarks = models.CharField(
+    #     max_length=255,
+    #     verbose_name="Comments or notes about the taxon or name.",
+    # )
+
+    @property
+    def identificationRemarks(self) ->str|None:
+        """Comments or notes about the dwc:Identification.
+    	http://rs.tdwg.org/dwc/terms/identificationRemarks
+
+        """
+        return None
+    identificationRemarks.fget.short_description = "Comments or notes about the dwc:Identification."
+
+# TODO
+# scientificNameAuthorship
+# kingdom
+# phylum
+# class
+# order
+# family
+# genus
+# specificEpithet
+# taxonRank
+
 
 
 class eMoF(OBISTable):

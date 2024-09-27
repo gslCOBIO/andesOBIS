@@ -224,6 +224,7 @@ def make_occurence_from_catch(catch: Catch, catch_idx: int, event: Event) -> Occ
     scientificNameID = f"urn:lsid:marinespecies.org:taxname:{catch.species.aphia_id}"
     basisOfRecord = "HumanObservation"
     occurrenceStatus = "Present"
+    occurrenceRemarks = catch.notes
     o = Occurrence(
         occurenceID=occurenceID,
         _event=event,
@@ -233,6 +234,7 @@ def make_occurence_from_catch(catch: Catch, catch_idx: int, event: Event) -> Occ
         basisOfRecord=basisOfRecord,
         occurrenceStatus=occurrenceStatus,
         associatedMedia=None,
+        occurrenceRemarks=occurrenceRemarks,
     )
     o.save()
     return o
