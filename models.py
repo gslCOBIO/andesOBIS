@@ -4,8 +4,7 @@ import logging
 import pytz
 
 from shapely import LineString
-from ecosystem_survey.models import Catch
-from shared_models.models import Cruise, Set
+from shared_models.models import Catch, Mission, Sample
 from shared_models.utils import calc_nautical_dist
 
 # Exceptions
@@ -13,7 +12,7 @@ class NoCatchData(Exception):
     pass
 class InvalidSpecies(Exception):
     pass
-class NoParentCruiseError(Exception):
+class NoParentMissionError(Exception):
     pass
 
 class OBISTable(models.Model):
@@ -114,15 +113,15 @@ class Event(OBISTable):
         """
         if self._event_start_dt and self._event_end_dt:
             start_dt_str = OBISTable.obis_datetime_str(
-                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+                self._event_start_dt, self._event_start_dt_p, tz=self._timezone
             )
             end_dt_str = OBISTable.obis_datetime_str(
-                self._event_end_dt, self._event_end_dt_p, tz=self.timezone
+                self._event_end_dt, self._event_end_dt_p, tz=self._timezone
             )
             return f"{start_dt_str}/{end_dt_str}"
         else:
             start_dt_str = OBISTable.obis_datetime_str(
-                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+                self._event_start_dt, self._event_start_dt_p, tz=self._timezone
             )
             return f"{start_dt_str}"
     eventDate.fget.short_description = "The date-time or interval during which a dwc:Event occurred. For occurrences, this is the date-time when the dwc:Event was recorded. Not suitable for a time in a geological context."
@@ -201,27 +200,27 @@ class Event(OBISTable):
     geodeticDatum.fget.short_description = "The ellipsoid, geodetic datum, or spatial reference system (SRS) upon which the geographic coordinates given in dwc:decimalLatitude and dwc:decimalLongitude are based."
 
 
-    @property
-    def eventTime(self) -> str|None:
-        """The time or interval during which a dwc:Event occurred.
-        http://rs.tdwg.org/dwc/terms/eventTime
-        """
-        if self._event_start_dt and self._event_end_dt:
-            start_dt_str = OBISTable.obis_time_str(
-                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
-            )
-            end_dt_str = OBISTable.obis_time_str(
-                self._event_end_dt, self._event_end_dt_p, tz=self.timezone
-            )
-            return f"{start_dt_str}/{end_dt_str}"
-        elif self._event_start_dt:
-            start_dt_str = OBISTable.obis_time_str(
-                self._event_start_dt, self._event_start_dt_p, tz=self.timezone
-            )
-            return f"{start_dt_str}"
-        else:
-            return None
-    eventTime.fget.short_description = "The time or interval during which a dwc:Event occurred."
+    # @property
+    # def eventTime(self) -> str|None:
+    #     """The time or interval during which a dwc:Event occurred.
+    #     http://rs.tdwg.org/dwc/terms/eventTime
+    #     """
+    #     if self._event_start_dt and self._event_end_dt:
+    #         start_dt_str = OBISTable.obis_time_str(
+    #             self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+    #         )
+    #         end_dt_str = OBISTable.obis_time_str(
+    #             self._event_end_dt, self._event_end_dt_p, tz=self.timezone
+    #         )
+    #         return f"{start_dt_str}/{end_dt_str}"
+    #     elif self._event_start_dt:
+    #         start_dt_str = OBISTable.obis_time_str(
+    #             self._event_start_dt, self._event_start_dt_p, tz=self.timezone
+    #         )
+    #         return f"{start_dt_str}"
+    #     else:
+    #         return None
+    # eventTime.fget.short_description = "The time or interval during which a dwc:Event occurred."
 
     # @property
     # def month(self) -> str|None:
@@ -257,7 +256,7 @@ class Event(OBISTable):
         verbose_name="The name of the continent in which the dcterms:Location occurs.",
         help_text="http://rs.tdwg.org/dwc/terms/continent",
     )
-
+ 
     # @property
     # def continent(self) -> str:
     #     """The name of the continent in which the dcterms:Location occurs.
@@ -331,7 +330,7 @@ class Event(OBISTable):
     #     "A legal document giving official permission to do something with the resource."
     # )
 
-    license = models.CharField(
+    rightsHolder = models.CharField(
         blank=True,
         null=True,
         default=None,
@@ -349,15 +348,6 @@ class Event(OBISTable):
     # language.fget.short_description = (
     #     "A person or organization owning or managing rights over the resource."
     # )
-
-    datasetID = models.CharField(
-        blank=True,
-        null=True,
-        default=None,
-        max_length=127,
-        verbose_name="An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution.",
-        help_text="http://rs.tdwg.org/dwc/terms/datasetID",
-    )
 
     # @property
     # def datasetID(self) -> str | None:
@@ -412,6 +402,15 @@ class Event(OBISTable):
         help_text="http://rs.tdwg.org/dwc/terms/datasetName",
     )
 
+    datasetID = models.CharField(
+        blank=True,
+        null=True,
+        default=None,
+        max_length=127,
+        verbose_name="An identifier for the set of data. May be a global unique identifier or an identifier specific to a collection or institution.",
+        help_text="http://rs.tdwg.org/dwc/terms/datasetID",
+    )
+
     # @property
     # def datasetName(self) -> str | None:
     #     """The name identifying the data set from which the record was derived.
@@ -422,7 +421,7 @@ class Event(OBISTable):
     #     "The name identifying the data set from which the record was derived."
     # )
 
-    # IML uses station name when the event is a Set and mission number when mission
+    # IML uses station name when the event is a Sample and mission number when mission
     fieldNumber = models.CharField(
         blank=True,
         null=True,
@@ -501,44 +500,48 @@ class Event(OBISTable):
     )
 
     @property
-    def timezone(self) -> str:
-        if isinstance(self.andes_object, Cruise):
+    def _timezone(self) -> str:
+        # NOTE this is a bad strat because the andes-object is not saved in the DB and cannot be retrieved past init
+        # consider the strat used in iamges with uuid
+        if isinstance(self.andes_object, Mission):
             return self.andes_object.display_tz
         else:
             try:
-                return self._parentEvent.timezone
+                return self._parentEvent._timezone
             except RecursionError:
                 logging.getLogger(__name__).error("All child Events needs to stem from a Cruise")
-                raise NoParentCruiseError
+                raise NoParentMissionError
+            except AttributeError:
+                return "UTC"
 
 
-    def _init_from_cruise(self, cruise: Cruise):
-        if not isinstance(cruise, Cruise):
-            raise RuntimeError("_init_from_cruise needs a valid cruise")
-        logging.getLogger(__name__).debug("Making Event from Cruise object")
-        self.andes_object = cruise
+    def _init_from_mission(self, mission: Mission):
+        if not isinstance(mission, Mission):
+            raise RuntimeError("_init_from_mission needs a valid mission")
+        logging.getLogger(__name__).debug("Making Event from Mission object")
+        self.andes_object = mission
 
-        self.eventID = cruise.mission_number
-        self._event_start_dt = cruise.start_date
+        self.eventID = mission.mission_number
+        self._event_start_dt = mission.start_date
         self._event_start_dt_p=3
-        self._event_end_dt = cruise.end_date
+        self._event_end_dt = mission.end_date
         self._event_end_dt_p=3
 
         # use cruise bounding box
-        self.decimalLatitude = 0.5 * (cruise.max_lat + cruise.min_lat)
-        self.decimalLongitude = 0.5 * (cruise.max_lng + cruise.min_lng)
+        self.decimalLatitude = 0.5 * (mission.max_lat + mission.min_lat)
+        self.decimalLongitude = 0.5 * (mission.max_lng + mission.min_lng)
         # use half of great-circle distance (converted to metres)
         _coordinateUncertaintyInMeters = (
             1852
             * 0.5
             * calc_nautical_dist(
-                {"lat": cruise.max_lat, "lng": cruise.max_lng},
-                {"lat": cruise.min_lat, "lng": cruise.min_lng},
+                {"lat": mission.max_lat, "lng": mission.max_lng},
+                {"lat": mission.min_lat, "lng": mission.min_lng},
             )
         )
         self.coordinateUncertaintyInMeters = round(_coordinateUncertaintyInMeters, 3)
-        self.fieldNumber = cruise.mission_number
-        self.eventRemarks = cruise.notes
+        self.fieldNumber = mission.mission_number
+        self.eventRemarks = mission.notes
 
         # Hard-coded values
         self.eventType = "Project"  # https://registry.gbif-uat.org/vocabulary/EventType/concepts
@@ -553,10 +556,10 @@ class Event(OBISTable):
         self.countryCode = "CA"
         self.country = "Canada"
 
-    def _init_from_fishing_set(self, my_set: Set):
-        if not isinstance(my_set, Set):
-            raise RuntimeError("_init_from_fishing_set needs a valid Set")
-        logging.getLogger(__name__).debug("Making Event from Set object")
+    def _init_from_fishing_set(self, my_set: Sample):
+        if not isinstance(my_set, Sample):
+            raise RuntimeError("_init_from_fishing_set needs a valid Sample")
+        logging.getLogger(__name__).debug("Making Event from Sample object")
 
         if len(my_set.operations.filter(is_fishing=True)) == 0:
             logging.getLogger(__name__).warning("%s has no fishing operations", my_set)
@@ -564,7 +567,7 @@ class Event(OBISTable):
 
         self.andes_object = my_set
 
-        def make_set_wkt(my_set: Set):
+        def make_set_wkt(my_set: Sample):
             start_coord = (
                 my_set.start_longitude,
                 my_set.start_latitude,
@@ -736,7 +739,7 @@ class Occurrence(OBISTable):
 
     def _init_from_catch(self, catch: Catch):
         """
-        Create an OBIS occurrence from a top level sampling event (a Set).
+        Create an OBIS occurrence from a top level sampling event (a Sample).
         Baskets having a parent baskets (poiting to a mixed catch) are ignored, they need to be populated using make_event_from_mixed_catch.
         Baskets that represent a subsample are ignored, they need a sub-sampling event.
 

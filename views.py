@@ -1,35 +1,70 @@
 import logging
 
 from andesOBIS.models import Event, InvalidSpecies, Occurrence
-from shared_models.models import Cruise, Set, Operation
-from ecosystem_survey.models import Catch
+from andesOBIS.serializers import EventSerializer
+from shared_models.common_views import CommonListView, CommonSingleTableListView
+from shared_models.mixins import AndesLoginRequiredMixin
+from shared_models.utils import get_active_mission
 
-# from andesOBIS.forms import EventForm
+from shared_models.models import Sample, Catch
 
-from shared_models.common_views import CommonCreateView
-from shared_models.mixins import AndesLeadRequiredMixin
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
 
-from shared_models.utils import get_active_cruise
-
-
+logging.getLogger().setLevel(logging.DEBUG)
 
 
+class EventListView(AndesLoginRequiredMixin, CommonListView):
+    model = Event
+    home_url_name = "index"
+    field_list = [
+        {"name": 'eventID', "class": "", "width": ""},
+        {"name": 'eventType', "class": "", "width": ""},
+        {"name": 'parentEventID'},
+        {"name": 'eventDate', "class": "", "width": ""},
+        {"name": 'year'},
+        {"name": 'decimalLatitude'},
+        {"name": 'decimalLongitude'},
+        {"name": 'geodeticDatum'},
+        {"name": 'coordinatePrecision'},
+        {"name": 'coordinateUncertaintyInMeters'},
+        {"name": 'continent'},
+        {"name": 'maximumDepthInMeters'},
+        {"name": 'minimumDepthInMeters'},
+        {"name": 'language'},
+        {"name": 'license'},
+        {"name": 'institutionID'},
+        {"name": 'institutionCode'},
+        {"name": 'datasetID'},
+        {"name": 'datasetName'},
+        {"name": 'fieldNumber'},
+        {"name": 'footprintWKT'},
+        {"name": 'footprintSRS'},
+        {"name": 'countryCode'},
+        {"name": 'country'},
+        {"name": 'eventRemarks'},
+    ]
 
-# class EventCreateView(AndesLeadRequiredMixin, CommonCreateView):
-#     model = Event
-#     form_class = EventForm
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        print(self.queryset)
+        return
+
+
+class EventViewSet(ModelViewSet):
+    queryset = Event.objects.all()
+    serializer_class = EventSerializer
+    permission_classes = [IsAuthenticated]
+    allowed_methods = ["GET"]
+
 
 
 def make_obis_events():
-
-
-    cruise = get_active_cruise()
+    cruise = get_active_mission()
     top_parent = Event()
-    top_parent._init_from_cruise(cruise)
+    top_parent._init_from_mission(cruise)
     top_parent.save()
-
-
-    for set in Set.objects.filter(cruise=cruise):
+    for set in Sample.objects.filter(cruise=cruise):
         print(set)
         if len(set.operations.filter(is_fishing=True)) == 0:
             continue
@@ -56,10 +91,3 @@ def make_obis_events():
                 except InvalidSpecies as exc:
                     print(exc)
                     pass
-
-
-
-
-
-
-
